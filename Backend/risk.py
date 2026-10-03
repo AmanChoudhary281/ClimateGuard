@@ -17,3 +17,18 @@ def calculate_heat_risk(temperature, humidity):
 
     else:
         return "LOW"
+
+
+def calculate_rain_risk(rainfall):
+
+    if rainfall > 204.4:
+        return "SEVERE"
+
+    elif rainfall >= 115.6:
+        return "HIGH"
+
+    elif rainfall >= 64.5:
+        return "MODERATE"
+
+    else:
+        return "LOW"

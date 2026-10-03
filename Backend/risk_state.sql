@@ -1,0 +1,2 @@
+ALTER TABLE users
+ADD COLUMN last_risk VARCHAR(20) DEFAULT 'LOW';

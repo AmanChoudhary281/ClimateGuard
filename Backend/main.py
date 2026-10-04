@@ -5,6 +5,14 @@ from risk import calculate_heat_risk
 from geocode import get_coordinates
 from weather import get_weather
 
+import sys
+from pathlib import Path
+
+RAG_DIR = Path(__file__).resolve().parent.parent / "RAG"
+sys.path.append(str(RAG_DIR))
+
+from rag_answer import generate_answer
+
 from dotenv import load_dotenv
 import os
 
@@ -256,4 +264,27 @@ def update_alert_status(alert_id: int, status: str):
         "message": "Alert status updated successfully",
         "alert_id": alert_id,
         "status": status
+    }
+
+class ChatRequest(BaseModel):
+    query: str
+
+@app.post("/chat")
+def chat(request: ChatRequest):
+
+    answer, results = generate_answer(request.query)
+
+    sources = []
+
+    for document, score in results:
+        sources.append({
+            "source": document.metadata["source"],
+            "page": document.metadata["page"],
+            "score": float(score)
+        })
+
+    return {
+        "query": request.query,
+        "answer": answer,
+        "sources": sources
     }

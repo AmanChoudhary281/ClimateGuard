@@ -288,43 +288,58 @@ def chat(request: ChatRequest):
             "answer": result
         }
 
-    if query_type == "KNOWLEDGE":
+elif query_type == "KNOWLEDGE":
 
-        answer, results = generate_answer(request.query)
+    answer, results = generate_answer(request.query)
 
-        sources = []
-
-        for document, score in results:
-            sources.append({
-                "source": document.metadata["source"],
-                "page": document.metadata["page"],
-                "score": float(score)
-            })
+    if isinstance(answer, dict) and answer.get("error") == "AI_QUOTA_EXCEEDED":
 
         return {
             "query": request.query,
             "type": "KNOWLEDGE",
-            "answer": answer,
-            "sources": sources
+            "answer": answer
         }
 
-    if query_type == "PERSONALIZED":
+    sources = []
+
+    for document, score in results:
+        sources.append({
+            "source": document.metadata["source"],
+            "page": document.metadata["page"],
+            "score": float(score)
+        })
+
+    return {
+        "query": request.query,
+        "type": "KNOWLEDGE",
+        "answer": answer,
+        "sources": sources
+    }
+
+    elif query_type == "PERSONALIZED":
 
         if request.user_id is None:
+
             return {
                 "query": request.query,
                 "type": "PERSONALIZED",
                 "message": "user_id is required for personalized queries."
             }
 
-        result = handle_personalized_query(
-            request.query,
-            request.user_id,
-            conn
-        )
+            result = handle_personalized_query(
+                request.query,
+                request.user_id,
+                conn
+            )
 
-        return {
-            "query": request.query,
-            "type": "PERSONALIZED",
-            "answer": result
-        }
+            return {
+                "query": request.query,
+                "type": "PERSONALIZED",
+                "answer": result
+            }
+
+    return {
+        "query": request.query,
+        "type": query_type,
+        "message": "Unable to process the query."
+    }

@@ -1,3 +1,5 @@
+from langchain_google_genai.chat_models import GoogleRateLimitError
+
 import sys
 from pathlib import Path
 
@@ -117,7 +119,14 @@ Rules:
 - Do not assume information that is not provided.
 """
 
-    response = llm.invoke(prompt)
+    try:
+        response = llm.invoke(prompt)
+
+    except GoogleRateLimitError:
+        return {
+            "message": "AI service quota is temporarily unavailable. Please try again later.",
+            "error": "AI_QUOTA_EXCEEDED"
+        }
 
     if isinstance(response.content, list):
         answer = "".join(

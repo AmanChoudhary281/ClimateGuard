@@ -1,3 +1,4 @@
+from langchain_google_genai.chat_models import GoogleRateLimitError
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -57,7 +58,14 @@ User Question:
 {query}
 """
 
-    response = llm.invoke(prompt)
+    try:
+        response = llm.invoke(prompt)
+
+    except GoogleRateLimitError:
+        return {
+            "answer": "AI service quota is temporarily unavailable. Please try again later.",
+            "error": "AI_QUOTA_EXCEEDED"
+        }, results
 
     if isinstance(response.content, list):
         answer = "".join(

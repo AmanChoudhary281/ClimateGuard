@@ -8,8 +8,13 @@ def classify_query(query):
         "my city",
         "near me",
         "where i live",
+        "my weather",
+        "my current weather",
+        "my current conditions",
         "should i go outside",
-        "is it safe for me"
+        "is it safe for me",
+        "for me",
+        "in my area"
     ]
 
     weather_keywords = [
@@ -22,7 +27,30 @@ def classify_query(query):
         "wind",
         "forecast",
         "hot",
-        "cold"
+        "cold",
+        "climate today",
+        "weather today",
+        "temperature today",
+        "will it rain"
+    ]
+
+    knowledge_keywords = [
+        "what is",
+        "what are",
+        "how does",
+        "how to",
+        "why",
+        "precautions",
+        "safety",
+        "symptoms",
+        "causes",
+        "guidelines",
+        "heatwave",
+        "heat wave",
+        "disaster",
+        "emergency",
+        "protect",
+        "prevention"
     ]
 
     for keyword in personalized_keywords:
@@ -32,5 +60,9 @@ def classify_query(query):
     for keyword in weather_keywords:
         if keyword in query:
             return "WEATHER"
+
+    for keyword in knowledge_keywords:
+        if keyword in query:
+            return "KNOWLEDGE"
 
     return "KNOWLEDGE"

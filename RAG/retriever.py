@@ -45,7 +45,7 @@ def rerank(query, documents):
     return ranked_results
 
 
-def search(query, retrieve_k=5, final_k=3):
+def search(query, retrieve_k=5, final_k=3, min_score=-1.0):
 
     vectorstore = load_vectorstore()
 
@@ -59,9 +59,14 @@ def search(query, retrieve_k=5, final_k=3):
         results
     )
 
-    return reranked_results[:final_k]
+    filtered_results = [
+        (document, score)
+        for document, score in reranked_results
+        if score >= min_score
+    ]
 
-
+    return filtered_results[:final_k]
+    
 if __name__ == "__main__":
 
     query = input("\nAsk ClimateGuard: ")

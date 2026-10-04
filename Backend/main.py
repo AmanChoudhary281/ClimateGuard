@@ -12,6 +12,9 @@ RAG_DIR = Path(__file__).resolve().parent.parent / "RAG"
 sys.path.append(str(RAG_DIR))
 
 from rag_answer import generate_answer
+from router import classify_query
+from weather_handler import handle_weather_query
+from personalized_handler import handle_personalized_query
 
 from dotenv import load_dotenv
 import os
@@ -268,23 +271,60 @@ def update_alert_status(alert_id: int, status: str):
 
 class ChatRequest(BaseModel):
     query: str
+    user_id: int | None = None
 
 @app.post("/chat")
 def chat(request: ChatRequest):
 
-    answer, results = generate_answer(request.query)
+    query_type = classify_query(request.query)
 
-    sources = []
+    if query_type == "WEATHER":
 
-    for document, score in results:
-        sources.append({
-            "source": document.metadata["source"],
-            "page": document.metadata["page"],
-            "score": float(score)
-        })
+        result = handle_weather_query(request.query)
 
-    return {
-        "query": request.query,
-        "answer": answer,
-        "sources": sources
-    }
+        return {
+            "query": request.query,
+            "type": "WEATHER",
+            "answer": result
+        }
+
+    if query_type == "KNOWLEDGE":
+
+        answer, results = generate_answer(request.query)
+
+        sources = []
+
+        for document, score in results:
+            sources.append({
+                "source": document.metadata["source"],
+                "page": document.metadata["page"],
+                "score": float(score)
+            })
+
+        return {
+            "query": request.query,
+            "type": "KNOWLEDGE",
+            "answer": answer,
+            "sources": sources
+        }
+
+    if query_type == "PERSONALIZED":
+
+        if request.user_id is None:
+            return {
+                "query": request.query,
+                "type": "PERSONALIZED",
+                "message": "user_id is required for personalized queries."
+            }
+
+        result = handle_personalized_query(
+            request.query,
+            request.user_id,
+            conn
+        )
+
+        return {
+            "query": request.query,
+            "type": "PERSONALIZED",
+            "answer": result
+        }

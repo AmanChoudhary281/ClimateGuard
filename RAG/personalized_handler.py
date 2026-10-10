@@ -17,9 +17,12 @@ from retriever import search
 
 load_dotenv(r"D:\Project\ClimateGuard\Backend\.env")
 
+
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.8-flash",
-    temperature=0
+    model="gemini-3.5-flash",
+    temperature=0,
+    request_timeout=20,
+    max_retries=0
 )
 
 
@@ -27,57 +30,62 @@ def handle_personalized_query(query, user_id, conn):
 
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT name, address, latitude, longitude
-        FROM users
-        WHERE id = %s
-        """,
-        (user_id,)
-    )
+    try:
 
-    user = cursor.fetchone()
-
-    if not user:
-        return {
-            "message": "User not found."
-        }
-
-    name, address, latitude, longitude = user
-
-    temperature, humidity, rainfall, wind_speed = get_weather(
-        latitude,
-        longitude
-    )
-
-    heat_risk = calculate_heat_risk(
-        temperature,
-        humidity
-    )
-
-    rain_risk = calculate_rain_risk(
-        rainfall
-    )
-
-    results = search(
-        query,
-        retrieve_k=5,
-        final_k=3
-    )
-
-    context_parts = []
-
-    for document, score in results:
-
-        context_parts.append(
-            f"Source: {document.metadata['source']}\n"
-            f"Page: {document.metadata['page']}\n"
-            f"Content:\n{document.page_content}"
+        cursor.execute(
+            """
+            SELECT name, address, latitude, longitude
+            FROM users
+            WHERE id = %s
+            """,
+            (user_id,)
         )
 
-    context = "\n\n---\n\n".join(context_parts)
+        user = cursor.fetchone()
 
-    prompt = f"""
+        if not user:
+            cursor.close()
+
+            return {
+                "message": "User not found.",
+                "error": "USER_NOT_FOUND"
+            }
+
+        name, address, latitude, longitude = user
+
+        temperature, humidity, rainfall, wind_speed = get_weather(
+            latitude,
+            longitude
+        )
+
+        heat_risk = calculate_heat_risk(
+            temperature,
+            humidity
+        )
+
+        rain_risk = calculate_rain_risk(
+            rainfall
+        )
+
+        results = search(
+            query,
+            retrieve_k=5,
+            final_k=3
+        )
+
+        context_parts = []
+
+        for document, score in results:
+
+            context_parts.append(
+                f"Source: {document.metadata['source']}\n"
+                f"Page: {document.metadata['page']}\n"
+                f"Content:\n{document.page_content}"
+            )
+
+        context = "\n\n---\n\n".join(context_parts)
+
+        prompt = f"""
 You are the ClimateGuard AI Assistant.
 
 Answer the user's question using the live weather information
@@ -119,39 +127,55 @@ Rules:
 - Do not assume information that is not provided.
 """
 
-    try:
-        response = llm.invoke(prompt)
+        try:
 
-    except GoogleRateLimitError:
+            response = llm.invoke(prompt)
+
+        except GoogleRateLimitError:
+
+            return {
+                "message": "AI service quota is temporarily unavailable. Please try again later.",
+                "error": "AI_QUOTA_EXCEEDED"
+            }
+
+        except Exception as e:
+
+            return {
+                "message": "AI service is temporarily unavailable.",
+                "error": str(e)
+            }
+
+        if isinstance(response.content, list):
+
+            answer = "".join(
+                item.get("text", "")
+                for item in response.content
+                if isinstance(item, dict)
+            )
+
+        else:
+
+            answer = response.content
+
         return {
-            "message": "AI service quota is temporarily unavailable. Please try again later.",
-            "error": "AI_QUOTA_EXCEEDED"
+            "answer": answer,
+            "location": address,
+            "temperature": temperature,
+            "humidity": humidity,
+            "rainfall": rainfall,
+            "wind_speed": wind_speed,
+            "heat_risk": heat_risk,
+            "rain_risk": rain_risk,
+            "sources": [
+                {
+                    "source": document.metadata["source"],
+                    "page": document.metadata["page"],
+                    "score": float(score)
+                }
+                for document, score in results
+            ]
         }
 
-    if isinstance(response.content, list):
-        answer = "".join(
-            item.get("text", "")
-            for item in response.content
-            if isinstance(item, dict)
-        )
-    else:
-        answer = response.content
+    finally:
 
-    return {
-        "answer": answer,
-        "location": address,
-        "temperature": temperature,
-        "humidity": humidity,
-        "rainfall": rainfall,
-        "wind_speed": wind_speed,
-        "heat_risk": heat_risk,
-        "rain_risk": rain_risk,
-        "sources": [
-            {
-                "source": document.metadata["source"],
-                "page": document.metadata["page"],
-                "score": float(score)
-            }
-            for document, score in results
-        ]
-    }
+        cursor.close()

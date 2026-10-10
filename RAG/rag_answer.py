@@ -9,8 +9,10 @@ load_dotenv(r"D:\Project\ClimateGuard\Backend\.env")
 
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.8-flash",
-    temperature=0
+    model="gemini-3.5-flash",
+    temperature=0,
+    request_timeout=20,
+    max_retries=0
 )
 
 
@@ -65,6 +67,25 @@ User Question:
         return {
             "answer": "AI service quota is temporarily unavailable. Please try again later.",
             "error": "AI_QUOTA_EXCEEDED"
+        }, results
+
+    except Exception as e:
+        fallback_answer = (
+            "Based on the available ClimateGuard sources:\n\n"
+            + "\n\n".join(
+                f"• {document.page_content.strip()}"
+                for document, score in results
+            )
+            + "\n\nSources:\n"
+            + "\n".join(
+                f"• {document.metadata['source']} — Page {document.metadata['page']}"
+                for document, score in results
+            )
+        )
+
+        return {
+            "answer": fallback_answer,
+            "error": str(e)
         }, results
 
     if isinstance(response.content, list):

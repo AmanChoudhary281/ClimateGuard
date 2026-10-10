@@ -3,3 +3,22 @@ venv/
 __pycache__/
 *.pyc
 .env
+
+# Frontend dependencies and backups
+node_modules/
+Frontend-backup/
+
+# Local database backups
+*.sql
+
+# Frontend environment secrets
+.env.*
+!.env.example
+
+# Temporary inspection files and local backups
+Frontend/.aistudio/
+Frontend/app/
+Frontend/tmp/
+Frontend/inspect_*.py
+Frontend/src/services/*.bak
+Frontend/src/services/*.corrected

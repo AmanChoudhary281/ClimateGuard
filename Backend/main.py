@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel
 from fastapi import FastAPI
 import psycopg2
@@ -169,10 +168,16 @@ def create_user(user: User):
 @app.post("/weather")
 @app.post("/api/weather")
 def save_weather(latitude: float, longitude: float):
-    temperature, humidity, rainfall, wind_speed = get_weather(
-        latitude,
-        longitude,
-    )
+    weather_data = get_weather(latitude, longitude)
+
+    if not weather_data:
+        return {
+            "message": "Failed to fetch weather data. Please try again later.",
+            "latitude": latitude,
+            "longitude": longitude,
+        }
+
+    temperature, humidity, rainfall, wind_speed = weather_data
 
     risk = calculate_heat_risk(temperature, humidity)
 

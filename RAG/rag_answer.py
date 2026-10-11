@@ -5,7 +5,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from retriever import search
 
 
-load_dotenv(r"D:\Project\ClimateGuard\Backend\.env")
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 llm = ChatGoogleGenerativeAI(

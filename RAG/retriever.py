@@ -1,19 +1,22 @@
+
 from pathlib import Path
+from functools import lru_cache
 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from sentence_transformers import CrossEncoder
 
 
-VECTORSTORE_DIR = Path(__file__).parent / "vectorstore"
+VECTORSTORE_DIR = Path(__file__).resolve().parent / "vectorstore"
 
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
+@lru_cache(maxsize=1)
 def load_vectorstore():
-
     embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_kwargs={"device": "cpu"}
     )
 
     vectorstore = FAISS.load_local(
@@ -25,9 +28,16 @@ def load_vectorstore():
     return vectorstore
 
 
-def rerank(query, documents):
+@lru_cache(maxsize=1)
+def load_reranker():
+    return CrossEncoder(
+        RERANKER_MODEL,
+        device="cpu"
+    )
 
-    reranker = CrossEncoder(RERANKER_MODEL)
+
+def rerank(query, documents):
+    reranker = load_reranker()
 
     pairs = [
         [query, document.page_content]
@@ -38,7 +48,7 @@ def rerank(query, documents):
 
     ranked_results = sorted(
         zip(documents, scores),
-        key=lambda x: x[1],
+        key=lambda x: float(x[1]),
         reverse=True
     )
 
@@ -46,7 +56,6 @@ def rerank(query, documents):
 
 
 def search(query, retrieve_k=5, final_k=3, min_score=-1.0):
-
     vectorstore = load_vectorstore()
 
     results = vectorstore.similarity_search(
@@ -54,38 +63,24 @@ def search(query, retrieve_k=5, final_k=3, min_score=-1.0):
         k=retrieve_k
     )
 
-    reranked_results = rerank(
-        query,
-        results
-    )
+    reranked_results = rerank(query, results)
 
     filtered_results = [
-        (document, score)
+        (document, float(score))
         for document, score in reranked_results
-        if score >= min_score
+        if float(score) >= min_score
     ]
 
     return filtered_results[:final_k]
-    
+
+
 if __name__ == "__main__":
-
     query = input("\nAsk ClimateGuard: ")
-
     results = search(query)
 
-    print("\nReranked relevant chunks:\n")
-
-    for i, (document, score) in enumerate(
-        results,
-        start=1
-    ):
-
-        print(f"--- Result {i} ---")
+    for i, (document, score) in enumerate(results, start=1):
+        print(f"\n--- Result {i} ---")
         print(f"Rerank Score: {score:.4f}")
         print(f"Source: {document.metadata['source']}")
         print(f"Page: {document.metadata['page']}")
-        print(f"Method: {document.metadata['method']}")
-        print(f"Chunk ID: {document.metadata['chunk_id']}")
-        print()
         print(document.page_content[:1500])
-        print()

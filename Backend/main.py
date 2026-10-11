@@ -15,10 +15,7 @@ import os
 RAG_DIR = Path(__file__).resolve().parent.parent / "RAG"
 sys.path.append(str(RAG_DIR))
 
-from rag_answer import generate_answer
 from router import classify_query
-from weather_handler import handle_weather_query
-from personalized_handler import handle_personalized_query
 
 load_dotenv()
 
@@ -368,6 +365,7 @@ def chat(request: ChatRequest):
     )
 
     if query_type == "WEATHER":
+        from weather_handler import handle_weather_query
 
         result = handle_weather_query(
             request.query
@@ -380,13 +378,13 @@ def chat(request: ChatRequest):
         }
 
     elif query_type == "KNOWLEDGE":
+        from rag_answer import generate_answer
 
         answer, results = generate_answer(
             request.query
         )
 
         if isinstance(answer, dict) and answer.get("error") == "AI_QUOTA_EXCEEDED":
-
             return {
                 "query": request.query,
                 "type": "KNOWLEDGE",
@@ -396,7 +394,6 @@ def chat(request: ChatRequest):
         sources = []
 
         for document, score in results:
-
             sources.append(
                 {
                     "source": document.metadata["source"],
@@ -415,12 +412,13 @@ def chat(request: ChatRequest):
     elif query_type == "PERSONALIZED":
 
         if request.user_id is None:
-
             return {
                 "query": request.query,
                 "type": "PERSONALIZED",
                 "message": "user_id is required for personalized queries."
             }
+
+        from personalized_handler import handle_personalized_query
 
         result = handle_personalized_query(
             request.query,

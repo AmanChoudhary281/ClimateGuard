@@ -15,7 +15,7 @@ from weather import get_weather
 from risk import calculate_heat_risk, calculate_rain_risk
 from retriever import search
 
-load_dotenv(r"D:\Project\ClimateGuard\Backend\.env")
+load_dotenv()
 
 
 llm = ChatGoogleGenerativeAI(

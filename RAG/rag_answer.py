@@ -8,7 +8,7 @@ from retriever import search
 load_dotenv()
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
+    model="gemini-3.8-flash",
     temperature=0,
     request_timeout=20,
     max_retries=0,

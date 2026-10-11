@@ -1,85 +1,90 @@
-from langchain_google_genai.chat_models import GoogleRateLimitError
-
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai.chat_models import GoogleRateLimitError
 
 RAG_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = RAG_DIR.parent / "Backend"
 
 sys.path.append(str(BACKEND_DIR))
 
+load_dotenv()
+
 from weather import get_weather
 from risk import calculate_heat_risk, calculate_rain_risk
 from retriever import search
 
-load_dotenv()
-
-
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
+    model="gemini-3.8-flash",
     temperature=0,
     request_timeout=20,
-    max_retries=0
+    max_retries=0,
 )
 
 
 def handle_personalized_query(query, user_id, conn):
-
     cursor = conn.cursor()
 
     try:
-
         cursor.execute(
             """
             SELECT name, address, latitude, longitude
             FROM users
             WHERE id = %s
             """,
-            (user_id,)
+            (user_id,),
         )
 
         user = cursor.fetchone()
 
         if not user:
-            cursor.close()
-
             return {
                 "message": "User not found.",
-                "error": "USER_NOT_FOUND"
+                "error": "USER_NOT_FOUND",
             }
 
         name, address, latitude, longitude = user
 
-        temperature, humidity, rainfall, wind_speed = get_weather(
-            latitude,
-            longitude
-        )
+        try:
+            weather_data = get_weather(latitude, longitude)
+        except Exception as e:
+            print(
+                f"Personalized weather error: {type(e).__name__}: {e}",
+                flush=True,
+            )
+            weather_data = None
 
-        heat_risk = calculate_heat_risk(
-            temperature,
-            humidity
-        )
+        if not weather_data:
+            return {
+                "message": (
+                    "Current weather is temporarily unavailable "
+                    "for your location. Please try again later."
+                ),
+                "error": "WEATHER_UNAVAILABLE",
+            }
 
-        rain_risk = calculate_rain_risk(
-            rainfall
-        )
+        temperature, humidity, rainfall, wind_speed = weather_data
 
-        results = search(
-            query,
-            retrieve_k=5,
-            final_k=3
-        )
+        heat_risk = calculate_heat_risk(temperature, humidity)
+        rain_risk = calculate_rain_risk(rainfall)
+
+        try:
+            results = search(query, retrieve_k=5, final_k=3)
+        except Exception as e:
+            print(
+                f"Personalized retrieval error: {type(e).__name__}: {e}",
+                flush=True,
+            )
+            results = []
 
         context_parts = []
 
         for document, score in results:
-
             context_parts.append(
-                f"Source: {document.metadata['source']}\n"
-                f"Page: {document.metadata['page']}\n"
+                f"Source: {document.metadata.get('source', 'Unknown')}\n"
+                f"Page: {document.metadata.get('page', 'Unknown')}\n"
                 f"Content:\n{document.page_content}"
             )
 
@@ -88,14 +93,8 @@ def handle_personalized_query(query, user_id, conn):
         prompt = f"""
 You are the ClimateGuard AI Assistant.
 
-Answer the user's question using the live weather information
-and the provided safety guidance.
-
-User:
-{name}
-
-Location:
-{address}
+User: {name}
+Location: {address}
 
 Current Weather:
 Temperature: {temperature}°C
@@ -103,59 +102,61 @@ Humidity: {humidity}%
 Rainfall: {rainfall} mm
 Wind Speed: {wind_speed} km/h
 
-Calculated Risk:
+ClimateGuard Calculated Risks:
 Heat Risk: {heat_risk}
 Rain Risk: {rain_risk}
 
 Safety Guidance:
-
 {context}
 
 User Question:
-
 {query}
 
 Rules:
-- Do not make absolute claims that the user is completely safe or unsafe.
-- Do not provide medical diagnosis or medical advice.
-- Report the ClimateGuard calculated risks clearly.
-- Use phrases such as "ClimateGuard currently assesses..." when describing risk.
-- Give practical precautions based only on the provided safety guidance.
-- If the risk is LOW, explain that no significant heat or rainfall risk is detected by ClimateGuard at the moment.
-- If the risk is MODERATE, HIGH, or SEVERE, clearly explain the detected risk and relevant precautions.
 - Do not invent facts.
-- Do not assume information that is not provided.
+- Do not provide a medical diagnosis.
+- Clearly report the calculated risks.
+- Give practical precautions based on the supplied safety guidance.
+- Do not claim that the user is completely safe or unsafe.
+- If the context is insufficient, say so clearly.
 """
 
         try:
-
             response = llm.invoke(prompt)
+            content = response.content
 
-        except GoogleRateLimitError:
+            if isinstance(content, str):
+                answer = content
+            elif isinstance(content, list):
+                answer = "\n".join(
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict)
+                )
+            else:
+                answer = str(content)
 
-            return {
-                "message": "AI service quota is temporarily unavailable. Please try again later.",
-                "error": "AI_QUOTA_EXCEEDED"
-            }
+            if not answer.strip():
+                raise ValueError("Gemini returned an empty response")
 
-        except Exception as e:
-
-            return {
-                "message": "AI service is temporarily unavailable.",
-                "error": str(e)
-            }
-
-        if isinstance(response.content, list):
-
-            answer = "".join(
-                item.get("text", "")
-                for item in response.content
-                if isinstance(item, dict)
+        except GoogleRateLimitError as e:
+            print(f"Personalized Gemini rate limit: {e}", flush=True)
+            answer = (
+                "AI service quota is temporarily unavailable. "
+                "Please try again later."
             )
 
-        else:
+        except Exception as e:
+            print(
+                f"Personalized Gemini error: {type(e).__name__}: {e}",
+                flush=True,
+            )
 
-            answer = response.content
+            answer = (
+                "The AI service is temporarily unavailable. "
+                "Current calculated risks: "
+                f"Heat Risk: {heat_risk}; Rain Risk: {rain_risk}."
+            )
 
         return {
             "answer": answer,
@@ -168,14 +169,13 @@ Rules:
             "rain_risk": rain_risk,
             "sources": [
                 {
-                    "source": document.metadata["source"],
-                    "page": document.metadata["page"],
-                    "score": float(score)
+                    "source": document.metadata.get("source", "Unknown"),
+                    "page": document.metadata.get("page", "Unknown"),
+                    "score": float(score),
                 }
                 for document, score in results
-            ]
+            ],
         }
 
     finally:
-
         cursor.close()

@@ -10,41 +10,41 @@ from geocode import get_coordinates
 
 
 def handle_weather_query(query):
-
     query = query.lower().strip()
 
-    location = None
+    match = re.search(r"\b(?:in|at|near)\s+(.+)$", query)
 
-    for word in ["in ", "at ", "near "]:
+    if not match:
+        return {
+            "message": (
+                "Please specify a location, for example: "
+                "'Will it rain today in Greater Noida?'"
+            )
+        }
 
-        if word in query:
-            location = query.split(word, 1)[1].strip()
-            location = re.sub(r"[?.!,]+$", "", location).strip()
-            break
+    location = match.group(1).strip()
+    location = re.sub(r"[?.!,]+$", "", location).strip()
+
+    location = re.sub(
+        r"\b(today|tomorrow|tonight|forecast|weather|"
+        r"temperature|next 3 days|next three days)\b",
+        "",
+        location,
+    ).strip()
 
     if not location:
+        return {"message": "Please specify a valid location."}
+
+    try:
+        latitude, longitude = get_coordinates(location)
+    except Exception as e:
+        print(f"Geocoding error: {type(e).__name__}: {e}", flush=True)
         return {
-            "message": "Please specify a location."
+            "message": "Location lookup is temporarily unavailable."
         }
-
-    location = re.sub(
-        r"\b(today|tomorrow|tonight|forecast|next 3 days|next three days)\b",
-        "",
-        location
-    ).strip()
-
-    location = re.sub(
-        r"^(in|at|near)\s+",
-        "",
-        location
-    ).strip()
-
-    latitude, longitude = get_coordinates(location)
 
     if latitude is None or longitude is None:
-        return {
-            "message": "Could not find the specified location."
-        }
+        return {"message": "Could not find the specified location."}
 
     forecast_words = [
         "forecast",
@@ -52,48 +52,53 @@ def handle_weather_query(query):
         "next 3 days",
         "next three days",
         "will it rain",
-        "will it be"
+        "will it be",
     ]
 
-    is_forecast = any(
-        word in query
-        for word in forecast_words
-    )
+    is_forecast = any(word in query for word in forecast_words)
 
-    if is_forecast:
+    try:
+        if is_forecast:
+            forecast = get_forecast(latitude, longitude, days=3)
 
-        forecast = get_forecast(
-            latitude,
-            longitude,
-            days=3
-        )
+            if forecast is None:
+                return {
+                    "message": (
+                        "Forecast service is currently unavailable. "
+                        "Please try again later."
+                    )
+                }
 
-        if forecast is None:
             return {
-                "message": "Forecast service is currently unavailable. Please try again later."
+                "location": location,
+                "forecast": forecast,
             }
+
+        weather = get_weather(latitude, longitude)
+
+        if weather is None:
+            return {
+                "message": (
+                    "Weather service is currently unavailable. "
+                    "Please try again later."
+                )
+            }
+
+        temperature, humidity, rainfall, wind_speed = weather
 
         return {
             "location": location,
-            "forecast": forecast
+            "temperature": temperature,
+            "humidity": humidity,
+            "rainfall": rainfall,
+            "wind_speed": wind_speed,
         }
 
-    weather = get_weather(
-        latitude,
-        longitude
-    )
-
-    if weather is None:
+    except Exception as e:
+        print(f"Weather handler error: {type(e).__name__}: {e}", flush=True)
         return {
-            "message": "Weather service is currently unavailable. Please try again later."
+            "message": (
+                "Weather service is temporarily unavailable. "
+                "Please try again later."
+            )
         }
-
-    temperature, humidity, rainfall, wind_speed = weather
-
-    return {
-        "location": location,
-        "temperature": temperature,
-        "humidity": humidity,
-        "rainfall": rainfall,
-        "wind_speed": wind_speed
-    }

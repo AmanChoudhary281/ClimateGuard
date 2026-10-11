@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+psycopg2-binary
+python-dotenv
+requests
+langchain-core
+langchain-text-splitters
+langchain-community
+langchain-huggingface
+langchain-google-genai
+sentence-transformers
+faiss-cpu
+pypdf
+pymupdf
+pillow
+pytesseract

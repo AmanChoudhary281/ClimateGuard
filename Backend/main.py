@@ -1,3 +1,4 @@
+
 from pydantic import BaseModel
 from fastapi import FastAPI
 import psycopg2
@@ -8,7 +9,6 @@ from weather import get_weather
 
 import sys
 from pathlib import Path
-
 from dotenv import load_dotenv
 import os
 
@@ -24,11 +24,13 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://climate-guard-inky.vercel.app",
         "http://localhost:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174"
+        "http://127.0.0.1:5174",
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,62 +41,57 @@ conn = psycopg2.connect(
     database=os.getenv("DB_NAME"),
     user=os.getenv("DB_USER"),
     password=os.getenv("DB_PASSWORD"),
-    port=os.getenv("DB_PORT")
+    port=os.getenv("DB_PORT"),
 )
 
 print("Database connected successfully!")
 
 
 def create_alert(user_id, risk):
-
-    if risk == "LOW":
-        return
-
-    if risk == "MODERATE":
+    if risk in ("LOW", "MODERATE"):
         return
 
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT id
-        FROM alerts
-        WHERE user_id = %s
-        AND alert_type = %s
-        AND severity = %s
-        AND status = 'PENDING'
-        LIMIT 1
-        """,
-        (user_id, "Heatwave", risk)
-    )
-
-    existing_alert = cursor.fetchone()
-
-    if existing_alert:
-        cursor.close()
-        return
-
-    message = (
-        f"{risk} heatwave risk detected in your area. "
-        "Stay hydrated and avoid direct sunlight."
-    )
-
-    cursor.execute(
-        """
-        INSERT INTO alerts
-        (user_id, alert_type, severity, message)
-        VALUES (%s, %s, %s, %s)
-        """,
-        (
-            user_id,
-            "Heatwave",
-            risk,
-            message
+    try:
+        cursor.execute(
+            """
+            SELECT id
+            FROM alerts
+            WHERE user_id = %s
+            AND alert_type = %s
+            AND severity = %s
+            AND status = 'PENDING'
+            LIMIT 1
+            """,
+            (user_id, "Heatwave", risk),
         )
-    )
 
-    conn.commit()
-    cursor.close()
+        if cursor.fetchone():
+            return
+
+        message = (
+            f"{risk} heatwave risk detected in your area. "
+            "Stay hydrated and avoid direct sunlight."
+        )
+
+        cursor.execute(
+            """
+            INSERT INTO alerts
+            (user_id, alert_type, severity, message)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (user_id, "Heatwave", risk, message),
+        )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cursor.close()
 
 
 @app.get("/")
@@ -113,7 +110,6 @@ class User(BaseModel):
 @app.post("/users")
 @app.post("/api/users")
 def create_user(user: User):
-
     latitude, longitude = get_coordinates(user.address)
 
     if latitude is None or longitude is None:
@@ -121,12 +117,9 @@ def create_user(user: User):
             "message": "Invalid address. Please enter a valid address."
         }
 
-    conn.rollback()
-
     cursor = conn.cursor()
 
     try:
-
         cursor.execute(
             """
             INSERT INTO users
@@ -139,14 +132,12 @@ def create_user(user: User):
                 user.phone,
                 user.address,
                 latitude,
-                longitude
-            )
+                longitude,
+            ),
         )
 
         user_id = cursor.fetchone()[0]
-
         conn.commit()
-        cursor.close()
 
         return {
             "message": "User saved successfully",
@@ -155,17 +146,22 @@ def create_user(user: User):
             "phone": user.phone,
             "address": user.address,
             "latitude": latitude,
-            "longitude": longitude
+            "longitude": longitude,
         }
 
     except psycopg2.errors.UniqueViolation:
-
         conn.rollback()
-        cursor.close()
 
         return {
             "message": "Phone number already registered."
         }
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cursor.close()
 
 
 @app.get("/weather")
@@ -173,94 +169,81 @@ def create_user(user: User):
 @app.post("/weather")
 @app.post("/api/weather")
 def save_weather(latitude: float, longitude: float):
-
     temperature, humidity, rainfall, wind_speed = get_weather(
         latitude,
-        longitude
+        longitude,
     )
 
-    risk = calculate_heat_risk(
-        temperature,
-        humidity
-    )
+    risk = calculate_heat_risk(temperature, humidity)
 
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT id
-        FROM users
-        WHERE latitude = %s
-        AND longitude = %s
-        LIMIT 1
-        """,
-        (
-            latitude,
-            longitude
-        )
-    )
-
-    user = cursor.fetchone()
-
-    if user:
-        create_alert(
-            user[0],
-            risk
-        )
-
-    cursor.execute(
-        """
-        INSERT INTO weather_data
-        (latitude, longitude, temperature, humidity, rainfall, wind_speed)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """,
-        (
-            latitude,
-            longitude,
-            temperature,
-            humidity,
-            rainfall,
-            wind_speed
-        )
-    )
-
-    cursor.execute(
-        """
-        SELECT id
-        FROM disaster_events
-        WHERE event_type = %s
-        AND severity = %s
-        AND latitude = %s
-        AND longitude = %s
-        LIMIT 1
-        """,
-        (
-            "Heatwave",
-            risk,
-            latitude,
-            longitude
-        )
-    )
-
-    existing_event = cursor.fetchone()
-
-    if not existing_event:
+    try:
         cursor.execute(
             """
-            INSERT INTO disaster_events
-            (event_type, severity, latitude, longitude)
-            VALUES (%s, %s, %s, %s)
+            SELECT id
+            FROM users
+            WHERE latitude = %s
+            AND longitude = %s
+            LIMIT 1
             """,
-            (
-                "Heatwave",
-                risk,
-                latitude,
-                longitude
-            )
+            (latitude, longitude),
         )
 
-    conn.commit()
-    cursor.close()
+        user = cursor.fetchone()
+
+        if user:
+            create_alert(user[0], risk)
+
+        cursor.execute(
+            """
+            INSERT INTO weather_data
+            (latitude, longitude, temperature, humidity, rainfall, wind_speed)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                latitude,
+                longitude,
+                temperature,
+                humidity,
+                rainfall,
+                wind_speed,
+            ),
+        )
+
+        cursor.execute(
+            """
+            SELECT id
+            FROM disaster_events
+            WHERE event_type = %s
+            AND severity = %s
+            AND latitude = %s
+            AND longitude = %s
+            LIMIT 1
+            """,
+            ("Heatwave", risk, latitude, longitude),
+        )
+
+        existing_event = cursor.fetchone()
+
+        if not existing_event:
+            cursor.execute(
+                """
+                INSERT INTO disaster_events
+                (event_type, severity, latitude, longitude)
+                VALUES (%s, %s, %s, %s)
+                """,
+                ("Heatwave", risk, latitude, longitude),
+            )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cursor.close()
 
     return {
         "message": "Weather fetched successfully",
@@ -270,43 +253,45 @@ def save_weather(latitude: float, longitude: float):
         "humidity": humidity,
         "rainfall": rainfall,
         "wind_speed": wind_speed,
-        "risk": risk
+        "risk": risk,
     }
 
 
 @app.get("/alerts/{user_id}")
 @app.get("/api/alerts/{user_id}")
 def get_alerts(user_id: int):
-
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT id, alert_type, severity, message, sent_at, status
-        FROM alerts
-        WHERE user_id = %s
-        ORDER BY sent_at DESC
-        """,
-        (user_id,)
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT id, alert_type, severity, message, sent_at, status
+            FROM alerts
+            WHERE user_id = %s
+            ORDER BY sent_at DESC
+            """,
+            (user_id,),
+        )
 
-    alerts = cursor.fetchall()
-    cursor.close()
+        alerts = cursor.fetchall()
 
-    return {
-        "user_id": user_id,
-        "alerts": [
-            {
-                "id": alert[0],
-                "alert_type": alert[1],
-                "severity": alert[2],
-                "message": alert[3],
-                "sent_at": alert[4],
-                "status": alert[5]
-            }
-            for alert in alerts
-        ]
-    }
+        return {
+            "user_id": user_id,
+            "alerts": [
+                {
+                    "id": alert[0],
+                    "alert_type": alert[1],
+                    "severity": alert[2],
+                    "message": alert[3],
+                    "sent_at": alert[4],
+                    "status": alert[5],
+                }
+                for alert in alerts
+            ],
+        }
+
+    finally:
+        cursor.close()
 
 
 class AlertStatusRequest(BaseModel):
@@ -317,9 +302,8 @@ class AlertStatusRequest(BaseModel):
 @app.put("/api/alerts/{alert_id}/status")
 def update_alert_status(
     alert_id: int,
-    request: AlertStatusRequest
+    request: AlertStatusRequest,
 ):
-
     status = request.status.upper()
 
     if status not in ["PENDING", "SENT", "FAILED"]:
@@ -329,26 +313,30 @@ def update_alert_status(
 
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        UPDATE alerts
-        SET status = %s
-        WHERE id = %s
-        """,
-        (
-            status,
-            alert_id
+    try:
+        cursor.execute(
+            """
+            UPDATE alerts
+            SET status = %s
+            WHERE id = %s
+            """,
+            (status, alert_id),
         )
-    )
 
-    conn.commit()
-    cursor.close()
+        conn.commit()
 
-    return {
-        "message": "Alert status updated successfully",
-        "alert_id": alert_id,
-        "status": status
-    }
+        return {
+            "message": "Alert status updated successfully",
+            "alert_id": alert_id,
+            "status": status,
+        }
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cursor.close()
 
 
 class ChatRequest(BaseModel):
@@ -359,36 +347,32 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 @app.post("/api/chat")
 def chat(request: ChatRequest):
-
-    query_type = classify_query(
-        request.query
-    )
+    query_type = classify_query(request.query)
 
     if query_type == "WEATHER":
         from weather_handler import handle_weather_query
 
-        result = handle_weather_query(
-            request.query
-        )
+        result = handle_weather_query(request.query)
 
         return {
             "query": request.query,
             "type": "WEATHER",
-            "answer": result
+            "answer": result,
         }
 
     elif query_type == "KNOWLEDGE":
         from rag_answer import generate_answer
 
-        answer, results = generate_answer(
-            request.query
-        )
+        answer, results = generate_answer(request.query)
 
-        if isinstance(answer, dict) and answer.get("error") == "AI_QUOTA_EXCEEDED":
+        if (
+            isinstance(answer, dict)
+            and answer.get("error") == "AI_QUOTA_EXCEEDED"
+        ):
             return {
                 "query": request.query,
                 "type": "KNOWLEDGE",
-                "answer": answer
+                "answer": answer,
             }
 
         sources = []
@@ -398,7 +382,7 @@ def chat(request: ChatRequest):
                 {
                     "source": document.metadata["source"],
                     "page": document.metadata["page"],
-                    "score": float(score)
+                    "score": float(score),
                 }
             )
 
@@ -406,16 +390,15 @@ def chat(request: ChatRequest):
             "query": request.query,
             "type": "KNOWLEDGE",
             "answer": answer,
-            "sources": sources
+            "sources": sources,
         }
 
     elif query_type == "PERSONALIZED":
-
         if request.user_id is None:
             return {
                 "query": request.query,
                 "type": "PERSONALIZED",
-                "message": "user_id is required for personalized queries."
+                "message": "user_id is required for personalized queries.",
             }
 
         from personalized_handler import handle_personalized_query
@@ -423,17 +406,17 @@ def chat(request: ChatRequest):
         result = handle_personalized_query(
             request.query,
             request.user_id,
-            conn
+            conn,
         )
 
         return {
             "query": request.query,
             "type": "PERSONALIZED",
-            "answer": result
+            "answer": result,
         }
 
     return {
         "query": request.query,
         "type": query_type,
-        "message": "Unable to process the query."
+        "message": "Unable to process the query.",
     }

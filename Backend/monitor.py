@@ -165,10 +165,13 @@ def monitor_users():
             longitude
         )
 
-        temperature, humidity, rainfall, wind_speed = get_weather(
-            latitude,
-            longitude
-        )
+        weather_data = get_weather(latitude, longitude)
+
+        if weather_data is None:
+            print("Skipping user due to weather API failure:", user_id)
+            continue
+
+        temperature, humidity, rainfall, wind_speed = weather_data
 
         heat_risk = calculate_heat_risk(
             temperature,

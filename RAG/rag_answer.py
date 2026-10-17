@@ -4,7 +4,9 @@ from langchain_google_genai.chat_models import GoogleRateLimitError
 
 from retriever import search
 
-load_dotenv()
+from pathlib import Path
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / "Backend" / ".env")
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-3.8-flash",

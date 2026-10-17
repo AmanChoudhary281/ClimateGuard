@@ -1,84 +1,89 @@
-import React, { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from "react";
 
-interface ClimateBackgroundProps {
-  mouseX?: number;
-  mouseY?: number;
+type Star = { x: number; y: number; size: number; opacity: number; delay: number; dur: number; twinkle: boolean; tint: string };
+
+function makeStars(seed: number, count: number): Star[] {
+  let state = seed;
+  const random = () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+
+  return Array.from({ length: count }, (_, index) => ({
+    x: random() * 100,
+    y: random() * 100,
+    size: 0.5 + Math.pow(random(), 4) * 1.6,
+    opacity: 0.25 + random() * 0.55,
+    delay: -(index % 11) * 0.61,
+    dur: 3.2 + random() * 6.5,
+    twinkle: random() < 0.38,
+    tint: random() < 0.16 ? "oklch(0.88 0.08 70)" : random() < 0.2 ? "oklch(0.86 0.07 235)" : "",
+  }));
 }
 
-export const ClimateBackground: React.FC<ClimateBackgroundProps> = ({
-  mouseX = 0,
-  mouseY = 0,
-}) => {
-  // Calm, restrained starfield without visual noise
-  const stars = useMemo(() => {
-    const list: Array<{
-      id: number;
-      x: number;
-      y: number;
-      size: number;
-      opacity: number;
-      duration: number;
-      delay: number;
-    }> = [];
+export function ClimateBackground() {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const stars = useMemo(() => makeStars(1847, 170), []);
 
-    let seed = 42;
-    const random = () => {
-      seed = (seed * 16807) % 2147483647;
-      return (seed - 1) / 2147483646;
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || matchMedia("(prefers-reduced-motion: reduce)").matches || matchMedia("(pointer: coarse)").matches) return;
+
+    let frame = 0;
+    let targetX = 0;
+    let targetY = 0;
+    let x = 0;
+    let y = 0;
+    let previous = performance.now();
+
+    const animate = (now: number) => {
+      const delta = Math.min((now - previous) / 1000, 0.05);
+      previous = now;
+      const easing = 1 - Math.exp(-2.2 * delta);
+      x += (targetX - x) * easing;
+      y += (targetY - y) * easing;
+      root.style.setProperty("--space-x", x.toFixed(3));
+      root.style.setProperty("--space-y", y.toFixed(3));
+      frame = requestAnimationFrame(animate);
     };
 
-    // 65 subtle, calm background stars
-    for (let i = 0; i < 65; i++) {
-      list.push({
-        id: i,
-        x: random() * 100,
-        y: random() * 100,
-        size: random() > 0.9 ? 1.5 : 1,
-        opacity: 0.15 + random() * 0.45,
-        duration: 4 + random() * 5,
-        delay: random() * 6,
-      });
-    }
-    return list;
+    const onMove = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse") return;
+      targetX = event.clientX / window.innerWidth * 2 - 1;
+      targetY = event.clientY / window.innerHeight * 2 - 1;
+    };
+    const onLeave = () => { targetX = 0; targetY = 0; };
+
+    window.addEventListener("pointermove", onMove);
+    document.documentElement.addEventListener("mouseleave", onLeave);
+    frame = requestAnimationFrame(animate);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointermove", onMove);
+      document.documentElement.removeEventListener("mouseleave", onLeave);
+    };
   }, []);
 
   return (
-    <div className="fixed inset-0 pointer-events-none overflow-hidden select-none z-0">
-      {/* Deep Space Vignette */}
-      <div className="absolute inset-0 bg-[#02040a]" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-10%,rgba(14,30,55,0.35),rgba(2,4,10,0.96))]" />
-
-      {/* Atmospheric Horizon Hue */}
-      <div className="absolute bottom-0 left-0 w-full h-[55vh] bg-[radial-gradient(ellipse_70%_50%_at_30%_100%,rgba(6,25,50,0.25),transparent_70%)]" />
-
-      {/* Subtle Starfield with Parallax */}
-      <div
-        className="absolute inset-[-4%] transition-transform duration-500 ease-out"
-        style={{
-          transform: `translate3d(${mouseX * -6}px, ${mouseY * -6}px, 0)`,
-        }}
-      >
-        {stars.map((s) => (
-          <div
-            key={s.id}
-            className="absolute rounded-full bg-white transition-opacity"
+    <div ref={rootRef} className="space-environment" aria-hidden="true">
+      <div className="space-haze" />
+      <div className="milky-way" />
+      <div className="solar-presence" />
+      <div className="star-field">
+        {stars.map((star, index) => (
+          <i
+            key={index}
+            className={star.twinkle ? "star twinkle" : "star"}
             style={{
-              left: `${s.x}%`,
-              top: `${s.y}%`,
-              width: `${s.size}px`,
-              height: `${s.size}px`,
-              opacity: s.opacity,
-              animation: `starPulse ${s.duration}s infinite ease-in-out ${s.delay}s`,
+              left: `${star.x}%`, top: `${star.y}%`, width: star.size,
+              height: star.size, opacity: star.opacity,
+              animationDelay: `${star.delay}s`, animationDuration: `${star.dur}s`,
+              ...(star.tint ? { background: star.tint } : {}),
             }}
           />
         ))}
       </div>
-
-      {/* Frame HUD Corner Crosshairs */}
-      <div className="absolute top-5 left-5 text-slate-800 font-mono text-xs select-none">+</div>
-      <div className="absolute top-5 right-5 text-slate-800 font-mono text-xs select-none">+</div>
-      <div className="absolute bottom-5 left-5 text-slate-800 font-mono text-xs select-none">+</div>
-      <div className="absolute bottom-5 right-5 text-slate-800 font-mono text-xs select-none">+</div>
+      <div className="space-vignette" />
     </div>
   );
-};
+}

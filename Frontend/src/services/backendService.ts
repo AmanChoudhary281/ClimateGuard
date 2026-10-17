@@ -1,19 +1,21 @@
+
 import {
   AlertItem,
   ClimateConditions,
   Coordinates,
   ForecastDay,
   OperatorForm,
-  RiskLevel
+  RiskLevel,
 } from '../types/climate';
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || '/api'
+).replace(/\/$/, '');
 
 async function apiFetch<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
-
   const controller = new AbortController();
 
   const timeout = setTimeout(() => {
@@ -21,12 +23,9 @@ async function apiFetch<T>(
   }, 60000);
 
   try {
-
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
-
       signal: controller.signal,
-
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
@@ -35,267 +34,186 @@ async function apiFetch<T>(
     });
 
     if (!response.ok) {
-
       const text = await response.text().catch(() => '');
 
       throw new Error(
-        `Backend ${response.status}${
-          text ? `: ${text.slice(0, 180)}` : ''
-        }`
+        `Backend ${response.status}${text ? `: ${text.slice(0, 180)}` : ''}`
       );
     }
 
-    const contentType =
-      response.headers.get('content-type') || '';
+    const contentType = response.headers.get('content-type') || '';
 
     if (contentType.includes('application/json')) {
-      return response.json() as Promise<T>;
+      return (await response.json()) as T;
     }
 
     return (await response.text()) as T;
-
-  } catch (error: any) {
-
-    if (error?.name === 'AbortError') {
-      throw new Error(
-        'Backend request timed out. Please try again.'
-      );
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Backend request timed out. Please try again.');
     }
 
     throw error;
-
   } finally {
-
     clearTimeout(timeout);
-
   }
 }
 
+function asNumber(value: unknown, fallback = 0): number {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
 
-function asNumber(
-  value: unknown,
-  fallback = 0
-): number {
+  const numberValue =
+    typeof value === 'number' ? value : Number(value);
 
-  const n =
-    typeof value === 'number'
-      ? value
-      : Number(value);
-
-  return Number.isFinite(n)
-    ? n
-    : fallback;
+  return Number.isFinite(numberValue) ? numberValue : fallback;
 }
 
+function requiredNumber(
+  value: unknown,
+  fieldName: string
+): number {
+  if (
+    value === null ||
+    value === undefined ||
+    value === '' ||
+    (typeof value !== 'number' && typeof value !== 'string') ||
+    !Number.isFinite(Number(value))
+  ) {
+    throw new Error(
+      `Backend did not return valid ${fieldName}. Please refresh the weather data.`
+    );
+  }
 
-function normalizeRisk(
-  value: unknown
-): RiskLevel {
+  return Number(value);
+}
 
-  const v = String(value || '').toUpperCase();
+function normalizeRisk(value: unknown): RiskLevel {
+  const risk = String(value ?? '').toUpperCase();
 
   if (
-    v === 'SEVERE' ||
-    v === 'HIGH' ||
-    v === 'MODERATE' ||
-    v === 'LOW'
+    risk === 'SEVERE' ||
+    risk === 'HIGH' ||
+    risk === 'MODERATE' ||
+    risk === 'LOW'
   ) {
-    return v;
+    return risk;
   }
 
   return 'LOW';
 }
 
-
-function weatherCodeToCondition(
-  code: number
-): string {
-
+function weatherCodeToCondition(code: number): string {
   if (code === 0) return 'Clear Sky';
-
-  if (code === 1 || code === 2)
-    return 'Partly Cloudy';
-
-  if (code === 3)
-    return 'Overcast';
-
-  if (code >= 45 && code <= 48)
-    return 'Foggy Atmosphere';
-
-  if (code >= 51 && code <= 55)
-    return 'Light Drizzle';
-
-  if (code >= 61 && code <= 65)
-    return 'Rain';
-
-  if (code >= 71 && code <= 77)
-    return 'Snow';
-
-  if (code >= 80 && code <= 82)
-    return 'Rain Showers';
-
-  if (code >= 95)
-    return 'Thunderstorm';
+  if (code === 1 || code === 2) return 'Partly Cloudy';
+  if (code === 3) return 'Overcast';
+  if (code >= 45 && code <= 48) return 'Foggy Atmosphere';
+  if (code >= 51 && code <= 55) return 'Light Drizzle';
+  if (code >= 61 && code <= 65) return 'Rain';
+  if (code >= 71 && code <= 77) return 'Snow';
+  if (code >= 80 && code <= 82) return 'Rain Showers';
+  if (code >= 95) return 'Thunderstorm';
 
   return 'Stable Atmosphere';
 }
-
 
 function normalizeForecast(
   raw: any,
   temperature: number
 ): ForecastDay[] {
-
   const source =
-    raw?.daily ||
-    raw?.forecast ||
-    raw?.data?.daily ||
+    raw?.daily ??
+    raw?.forecast ??
+    raw?.data?.daily ??
     raw?.data?.forecast;
 
   if (Array.isArray(source)) {
+    return source.slice(0, 6).map((item: any, index: number) => {
+      const date = item.date ?? item.time ?? `+${index}d`;
+      const code = asNumber(
+        item.weatherCode ?? item.weather_code,
+        0
+      );
 
-    return source
-      .slice(0, 6)
-      .map((item: any, index: number) => ({
-
-        date:
-          item.date ||
-          item.time ||
-          `+${index}d`,
-
+      return {
+        date,
         dayName:
-          item.dayName ||
-          (
+          item.dayName ??
+          (index === 0
+            ? 'Today'
+            : index === 1
+              ? 'Tomorrow'
+              : new Date(date).toLocaleDateString([], {
+                  weekday: 'short',
+                })),
+        maxTemp: Math.round(
+          asNumber(
+            item.maxTemp ?? item.temperature_2m_max,
+            temperature + 2
+          )
+        ),
+        minTemp: Math.round(
+          asNumber(
+            item.minTemp ?? item.temperature_2m_min,
+            temperature - 5
+          )
+        ),
+        weatherCode: Math.round(code),
+        condition: item.condition ?? weatherCodeToCondition(code),
+        precipProb: Math.round(
+          asNumber(
+            item.precipProb ??
+              item.precipitation_probability_max,
+            0
+          )
+        ),
+      };
+    });
+  }
+
+  if (source?.time && Array.isArray(source.time)) {
+    return source.time.slice(0, 6).map(
+      (date: string, index: number) => {
+        const code = asNumber(source.weather_code?.[index], 0);
+
+        return {
+          date,
+          dayName:
             index === 0
               ? 'Today'
               : index === 1
                 ? 'Tomorrow'
-                : new Date(
-                    item.date ||
-                    item.time ||
-                    Date.now()
-                  ).toLocaleDateString(
-                    [],
-                    { weekday: 'short' }
-                  )
-          ),
-
-        maxTemp: Math.round(
-          asNumber(
-            item.maxTemp ??
-            item.temperature_2m_max,
-            temperature + 2
-          )
-        ),
-
-        minTemp: Math.round(
-          asNumber(
-            item.minTemp ??
-            item.temperature_2m_min,
-            temperature - 5
-          )
-        ),
-
-        weatherCode: Math.round(
-          asNumber(
-            item.weatherCode ??
-            item.weather_code,
-            0
-          )
-        ),
-
-        condition:
-          item.condition ||
-          weatherCodeToCondition(
+                : new Date(date).toLocaleDateString([], {
+                    weekday: 'short',
+                  }),
+          maxTemp: Math.round(
             asNumber(
-              item.weatherCode ??
-              item.weather_code,
+              source.temperature_2m_max?.[index],
+              temperature + 2
+            )
+          ),
+          minTemp: Math.round(
+            asNumber(
+              source.temperature_2m_min?.[index],
+              temperature - 5
+            )
+          ),
+          weatherCode: Math.round(code),
+          condition: weatherCodeToCondition(code),
+          precipProb: Math.round(
+            asNumber(
+              source.precipitation_probability_max?.[index],
               0
             )
           ),
-
-        precipProb: Math.round(
-          asNumber(
-            item.precipProb ??
-            item.precipitation_probability_max,
-            0
-          )
-        ),
-
-      }));
-
+        };
+      }
+    );
   }
-
-
-  if (
-    source?.time &&
-    Array.isArray(source.time)
-  ) {
-
-    return source.time
-      .slice(0, 6)
-      .map(
-        (
-          date: string,
-          index: number
-        ) => {
-
-          const code = asNumber(
-            source.weather_code?.[index],
-            0
-          );
-
-          return {
-
-            date,
-
-            dayName:
-              index === 0
-                ? 'Today'
-                : index === 1
-                  ? 'Tomorrow'
-                  : new Date(date).toLocaleDateString(
-                      [],
-                      { weekday: 'short' }
-                    ),
-
-            maxTemp: Math.round(
-              asNumber(
-                source.temperature_2m_max?.[index],
-                temperature + 2
-              )
-            ),
-
-            minTemp: Math.round(
-              asNumber(
-                source.temperature_2m_min?.[index],
-                temperature - 5
-              )
-            ),
-
-            weatherCode:
-              Math.round(code),
-
-            condition:
-              weatherCodeToCondition(code),
-
-            precipProb: Math.round(
-              asNumber(
-                source.precipitation_probability_max?.[index],
-                0
-              )
-            ),
-
-          };
-
-        }
-      );
-  }
-
 
   return [];
 }
-
 
 export async function registerUserWithBackend(
   form: OperatorForm
@@ -303,32 +221,18 @@ export async function registerUserWithBackend(
   userId: number | string | null;
   raw: any;
 }> {
+  const raw = await apiFetch<any>('/users', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: form.name,
+      phone: form.phone,
+      address: form.address,
+    }),
+  });
 
-  const raw = await apiFetch<any>(
-    '/users',
-    {
-      method: 'POST',
-
-      body: JSON.stringify({
-        name: form.name,
-        phone: form.phone,
-        address: form.address,
-      }),
-    }
-  );
-
-
-  if (
-    raw?.message ===
-    'Phone number already registered.'
-  ) {
-
-    throw new Error(
-      'Phone number already registered.'
-    );
-
+  if (raw?.message === 'Phone number already registered.') {
+    throw new Error('Phone number already registered.');
   }
-
 
   const userId =
     raw?.id ??
@@ -338,39 +242,24 @@ export async function registerUserWithBackend(
     raw?.data?.user_id ??
     null;
 
-
   if (userId == null) {
-
-    throw new Error(
-      'User registration failed.'
-    );
-
+    throw new Error('User registration failed.');
   }
 
-
   return {
-
     userId: String(userId),
-
-    raw
-
+    raw,
   };
-
 }
-
 
 export async function fetchBackendWeather(
   coords: Coordinates
 ): Promise<ClimateConditions> {
-
   const raw = await apiFetch<any>(
     `/weather?latitude=${encodeURIComponent(
       coords.lat
-    )}&longitude=${encodeURIComponent(
-      coords.lng
-    )}`
+    )}&longitude=${encodeURIComponent(coords.lng)}`
   );
-
 
   const source =
     raw?.data ??
@@ -378,186 +267,118 @@ export async function fetchBackendWeather(
     raw?.result ??
     raw;
 
+  const current = source?.current ?? source;
 
-  const current =
-    source?.current ??
-    source;
-
-
+  // Never silently convert missing temperature or humidity to zero.
   const temperature = Math.round(
-    asNumber(
-      current?.temperature ??
-      current?.temperature_2m
+    requiredNumber(
+      current?.temperature ?? current?.temperature_2m,
+      'temperature'
     )
   );
-
 
   const humidity = Math.round(
-    asNumber(
-      current?.humidity ??
-      current?.relative_humidity_2m
+    requiredNumber(
+      current?.humidity ?? current?.relative_humidity_2m,
+      'humidity'
     )
   );
-
 
   const windSpeed = Math.round(
     asNumber(
-      current?.wind_speed ??
-      current?.wind_speed_10m
+      current?.wind_speed ?? current?.wind_speed_10m,
+      0
     )
   );
 
-
   const rainfallMm = asNumber(
     current?.rainfall ??
-    current?.rain ??
-    current?.precipitation,
+      current?.rain ??
+      current?.precipitation,
     0
   );
 
-
   const feelsLike = Math.round(
     asNumber(
-      current?.feels_like ??
-      current?.apparent_temperature,
+      current?.feels_like ?? current?.apparent_temperature,
       temperature
     )
   );
 
-
   const windDirection = Math.round(
     asNumber(
-      current?.wind_direction ??
-      current?.wind_direction_10m,
+      current?.wind_direction ?? current?.wind_direction_10m,
       0
     )
   );
 
-
   const pressure = Math.round(
     asNumber(
-      current?.pressure ??
-      current?.surface_pressure,
+      current?.pressure ?? current?.surface_pressure,
       1013
     )
   );
 
-
-  const precipitationChance =
-    Math.round(
-      asNumber(
-        current?.precipitationChance ??
-        current?.precipitation_probability,
-        asNumber(
-          source?.daily
-            ?.precipitation_probability_max?.[0],
-          0
-        )
-      )
-    );
-
-
-  const weatherCode = Math.round(
+  const precipitationChance = Math.round(
     asNumber(
-      current?.weather_code,
-      0
+      current?.precipitationChance ??
+        current?.precipitation_probability,
+      asNumber(
+        source?.daily?.precipitation_probability_max?.[0],
+        0
+      )
     )
   );
 
-
-  const risk = normalizeRisk(
-    source?.risk ??
-    source?.heat_risk ??
-    source?.severity
+  const weatherCode = Math.round(
+    asNumber(current?.weather_code, 0)
   );
 
+  const risk = normalizeRisk(
+    source?.risk ?? source?.heat_risk ?? source?.severity
+  );
 
-  if (
-    !Number.isFinite(temperature) ||
-    !Number.isFinite(humidity)
-  ) {
-
-    throw new Error(
-      'Backend weather response could not be interpreted'
-    );
-
-  }
-
+  const uvValue = current?.uv_index ?? current?.uvIndex;
 
   return {
-
     temperature,
-
     feelsLike,
-
     humidity,
-
     windSpeed,
-
     windDirection,
-
     pressure,
-
     uvIndex:
-      (
-        current?.uv_index ??
-        current?.uvIndex
-      ) == null
-        ? undefined
-        : asNumber(
-            current?.uv_index ??
-            current?.uvIndex
-          ),
-
+      uvValue == null ? undefined : asNumber(uvValue),
     precipitationChance,
-
     rainfallMm,
-
     risk,
-
     conditionDescription:
-      source?.conditionDescription ||
-      source?.condition ||
-      weatherCodeToCondition(
-        weatherCode
-      ),
-
+      source?.conditionDescription ??
+      source?.condition ??
+      weatherCodeToCondition(weatherCode),
     source: 'live',
-
-    lastUpdated:
-      new Date().toLocaleTimeString(),
-
-    forecast:
-      normalizeForecast(
-        source,
-        temperature
-      ),
-
+    lastUpdated: new Date().toLocaleTimeString(),
+    forecast: normalizeForecast(source, temperature),
   };
-
 }
-
 
 export async function chatWithBackend(
   query: string,
   userId?: number | string | null
 ): Promise<string> {
-  const raw = await apiFetch<any>(
-    '/chat',
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        query,
-        ...(userId != null
-          ? {
-              user_id: Number.isFinite(Number(userId))
-                ? Number(userId)
-                : userId,
-            }
-          : {}),
-      }),
-    }
-  );
+  const raw = await apiFetch<any>('/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      query,
+      ...(userId != null
+        ? {
+            user_id: Number.isFinite(Number(userId))
+              ? Number(userId)
+              : userId,
+          }
+        : {}),
+    }),
+  });
 
   if (typeof raw === 'string') {
     return raw;
@@ -592,7 +413,8 @@ export async function chatWithBackend(
       const temperature = answer?.temperature ?? 'Unavailable';
       const humidity = answer?.humidity ?? 'Unavailable';
       const rainfall = answer?.rainfall ?? 0;
-      const windSpeed = answer?.wind_speed ?? answer?.windSpeed ?? 0;
+      const windSpeed =
+        answer?.wind_speed ?? answer?.windSpeed ?? 0;
 
       return [
         `Current weather in ${location}:`,
@@ -608,103 +430,57 @@ export async function chatWithBackend(
     }
   }
 
-  throw new Error(
-    'Backend returned no assistant response'
-  );
+  throw new Error('Backend returned no assistant response');
 }
 
 export async function fetchBackendAlerts(
   userId?: number | string | null
 ): Promise<AlertItem[]> {
-
   if (userId == null) {
     return [];
   }
 
-
+  // Backend route is /alerts/{user_id}, not /alerts?user_id=...
   const raw = await apiFetch<any>(
-    `/alerts?user_id=${encodeURIComponent(
-      userId
-    )}`
+    `/alerts/${encodeURIComponent(userId)}`
   );
 
-
-  const rows =
-    Array.isArray(raw)
-      ? raw
-      : raw?.alerts ??
-        raw?.data ??
-        raw?.results ??
-        [];
-
+  const rows = Array.isArray(raw)
+    ? raw
+    : raw?.alerts ?? raw?.data ?? raw?.results ?? [];
 
   if (!Array.isArray(rows)) {
     return [];
   }
 
-
-  return rows.map(
-    (
-      item: any,
-      index: number
-    ) => ({
-
-      id: String(
-        item.id ??
-        `BACKEND-${index}`
-      ),
-
-      type:
-        String(
-          item.alert_type ??
-          item.type ??
-          'HEATWAVE'
-        )
-          .toUpperCase()
-          .replace(
-            / /g,
-            '_'
-          ) as AlertItem['type'],
-
-      severity:
-        normalizeRisk(
-          item.severity
-        ),
-
-      title:
-        item.title ??
-        `${String(
-          item.alert_type ??
-          item.type ??
-          'CLIMATE ALERT'
-        ).toUpperCase()}`,
-
-      message:
-        item.message ??
-        'Climate risk detected in your monitored area.',
-
-      time:
-        item.time ??
-        item.sent_at ??
-        new Date().toLocaleTimeString(
-          [],
-          {
-            hour: '2-digit',
-            minute: '2-digit'
-          }
-        ),
-
-      status:
-        String(
-          item.status ??
-          'ACTIVE'
-        ).toUpperCase() as AlertItem['status'],
-
-      advisory:
-        item.advisory ??
-        'Follow local authority guidance and monitor ClimateGuard updates.',
-
-    })
-  );
-
+  return rows.map((item: any, index: number) => ({
+    id: String(item.id ?? `BACKEND-${index}`),
+    type: String(
+      item.alert_type ?? item.type ?? 'HEATWAVE'
+    )
+      .toUpperCase()
+      .replace(/ /g, '_') as AlertItem['type'],
+    severity: normalizeRisk(item.severity),
+    title:
+      item.title ??
+      String(
+        item.alert_type ?? item.type ?? 'CLIMATE ALERT'
+      ).toUpperCase(),
+    message:
+      item.message ??
+      'Climate risk detected in your monitored area.',
+    time:
+      item.time ??
+      item.sent_at ??
+      new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    status: String(
+      item.status ?? 'ACTIVE'
+    ).toUpperCase() as AlertItem['status'],
+    advisory:
+      item.advisory ??
+      'Follow local authority guidance and monitor ClimateGuard updates.',
+  }));
 }

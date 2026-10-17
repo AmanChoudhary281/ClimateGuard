@@ -9,7 +9,7 @@ import os
 
 load_dotenv()
 
-TEST_MODE = False
+TEST_MODE = True
 
 conn = psycopg2.connect(
     host=os.getenv("DB_HOST"),
@@ -84,7 +84,11 @@ def create_monitor_alert(user_id, phone, alert_type, risk):
 
     conn.commit()
 
-    sms_sent = send_sms(phone, message)
+    if TEST_MODE:
+        print("TEST MODE: SMS skipped for", phone)
+        sms_sent = True
+    else:
+        sms_sent = send_sms(phone, message)
 
     if sms_sent:
 
@@ -267,14 +271,15 @@ def monitor_users():
 
 scheduler = BlockingScheduler()
 
-scheduler.add_job(
-    monitor_users,
-    "interval",
-    minutes=10
-)
+if __name__ == "__main__":
+    scheduler = BlockingScheduler()
 
-print("Automatic monitoring started")
+    scheduler.add_job(
+        monitor_users,
+        "interval",
+        minutes=10
+    )
 
-monitor_users()
-
-scheduler.start()
+    print("Automatic monitoring started")
+    monitor_users()
+    scheduler.start()

@@ -1,0 +1,1 @@
+export default function AlertCard({a}){return<article className={`card alert s-${a.sev}`}><div className="row"><span className="pill">{a.sev}</span><small>{a.time} · {a.loc}</small></div><h3>{a.type}</h3><p>{a.msg}</p><small>{a.status}</small></article>}

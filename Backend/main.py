@@ -1,3 +1,4 @@
+
 from pydantic import BaseModel
 from fastapi import FastAPI
 import psycopg2
@@ -35,22 +36,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-conn = psycopg2.connect(
-    host=os.getenv("DB_HOST"),
-    database=os.getenv("DB_NAME"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD"),
-    port=os.getenv("DB_PORT"),
-)
+conn = None
 
-print("Database connected successfully!")
+
+def get_db_connection():
+    global conn
+
+    try:
+        if conn is not None and not conn.closed:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            return conn
+    except Exception:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+    conn = psycopg2.connect(
+        host=os.getenv("DB_HOST"),
+        database=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        port=os.getenv("DB_PORT"),
+        sslmode="require",
+        connect_timeout=10,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=3,
+    )
+
+    print("Database connected successfully!")
+    return conn
 
 
 def create_alert(user_id, risk):
     if risk in ("LOW", "MODERATE"):
         return
 
-    cursor = conn.cursor()
+    db = get_db_connection()
+    cursor = db.cursor()
 
     try:
         cursor.execute(
@@ -58,9 +85,9 @@ def create_alert(user_id, risk):
             SELECT id
             FROM alerts
             WHERE user_id = %s
-            AND alert_type = %s
-            AND severity = %s
-            AND status = 'PENDING'
+              AND alert_type = %s
+              AND severity = %s
+              AND status = 'PENDING'
             LIMIT 1
             """,
             (user_id, "Heatwave", risk),
@@ -83,21 +110,13 @@ def create_alert(user_id, risk):
             (user_id, "Heatwave", risk, message),
         )
 
-        conn.commit()
-
-    except Exception:
-        conn.rollback()
-        raise
-
     finally:
         cursor.close()
 
 
 @app.get("/")
 def home():
-    return {
-        "message": "Hello from ClimateGuard API 🚀"
-    }
+    return {"message": "Hello from ClimateGuard API 🚀"}
 
 
 class User(BaseModel):
@@ -116,7 +135,8 @@ def create_user(user: User):
             "message": "Invalid address. Please enter a valid address."
         }
 
-    cursor = conn.cursor()
+    db = get_db_connection()
+    cursor = db.cursor()
 
     try:
         cursor.execute(
@@ -136,7 +156,7 @@ def create_user(user: User):
         )
 
         user_id = cursor.fetchone()[0]
-        conn.commit()
+        db.commit()
 
         return {
             "message": "User saved successfully",
@@ -149,14 +169,17 @@ def create_user(user: User):
         }
 
     except psycopg2.errors.UniqueViolation:
-        conn.rollback()
-
-        return {
-            "message": "Phone number already registered."
-        }
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {"message": "Phone number already registered."}
 
     except Exception:
-        conn.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            pass
         raise
 
     finally:
@@ -170,7 +193,7 @@ def create_user(user: User):
 def save_weather(latitude: float, longitude: float):
     weather_data = get_weather(latitude, longitude)
 
-    if not weather_data:
+    if weather_data is None:
         return {
             "message": "Failed to fetch weather data. Please try again later.",
             "latitude": latitude,
@@ -178,10 +201,10 @@ def save_weather(latitude: float, longitude: float):
         }
 
     temperature, humidity, rainfall, wind_speed = weather_data
-
     risk = calculate_heat_risk(temperature, humidity)
 
-    cursor = conn.cursor()
+    db = get_db_connection()
+    cursor = db.cursor()
 
     try:
         cursor.execute(
@@ -189,16 +212,13 @@ def save_weather(latitude: float, longitude: float):
             SELECT id
             FROM users
             WHERE latitude = %s
-            AND longitude = %s
+              AND longitude = %s
             LIMIT 1
             """,
             (latitude, longitude),
         )
 
         user = cursor.fetchone()
-
-        if user:
-            create_alert(user[0], risk)
 
         cursor.execute(
             """
@@ -221,9 +241,9 @@ def save_weather(latitude: float, longitude: float):
             SELECT id
             FROM disaster_events
             WHERE event_type = %s
-            AND severity = %s
-            AND latitude = %s
-            AND longitude = %s
+              AND severity = %s
+              AND latitude = %s
+              AND longitude = %s
             LIMIT 1
             """,
             ("Heatwave", risk, latitude, longitude),
@@ -241,10 +261,16 @@ def save_weather(latitude: float, longitude: float):
                 ("Heatwave", risk, latitude, longitude),
             )
 
-        conn.commit()
+        if user:
+            create_alert(user[0], risk)
+
+        db.commit()
 
     except Exception:
-        conn.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            pass
         raise
 
     finally:
@@ -265,7 +291,8 @@ def save_weather(latitude: float, longitude: float):
 @app.get("/alerts/{user_id}")
 @app.get("/api/alerts/{user_id}")
 def get_alerts(user_id: int):
-    cursor = conn.cursor()
+    db = get_db_connection()
+    cursor = db.cursor()
 
     try:
         cursor.execute(
@@ -316,7 +343,8 @@ def update_alert_status(
             "message": "Invalid status. Use PENDING, SENT or FAILED."
         }
 
-    cursor = conn.cursor()
+    db = get_db_connection()
+    cursor = db.cursor()
 
     try:
         cursor.execute(
@@ -328,7 +356,7 @@ def update_alert_status(
             (status, alert_id),
         )
 
-        conn.commit()
+        db.commit()
 
         return {
             "message": "Alert status updated successfully",
@@ -337,7 +365,10 @@ def update_alert_status(
         }
 
     except Exception:
-        conn.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            pass
         raise
 
     finally:
@@ -408,10 +439,12 @@ def chat(request: ChatRequest):
 
         from personalized_handler import handle_personalized_query
 
+        db = get_db_connection()
+
         result = handle_personalized_query(
             request.query,
             request.user_id,
-            conn,
+            db,
         )
 
         return {

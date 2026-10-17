@@ -1,187 +1,446 @@
-import React, { useState, useEffect } from 'react';
-import { EarthScene } from './EarthScene';
-import { ClimateBackground } from './ClimateBackground';
-import { LiveMonitoringPanel } from './LiveMonitoringPanel';
-import { RegistrationCard } from './RegistrationCard';
-import { ExtendedTelemetryDrawer } from './ExtendedTelemetryDrawer';
-import { useClimate } from '../context/ClimateContext';
-import { RiskLevel } from '../types/climate';
 
-export const ClimateGuardHero: React.FC = () => {
+import { useState, useSyncExternalStore } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  ArrowRight,
+  Check,
+  LoaderCircle,
+  User,
+  Phone,
+  MapPin,
+} from "lucide-react";
+
+import { ClimateBackground } from "@/components/ClimateBackground";
+import { EarthScene } from "@/components/EarthScene";
+import { HudTelemetry } from "@/components/HudTelemetry";
+import { CameraPresetBar } from "@/components/CameraPresetBar";
+import { earthBus } from "@/lib/earth-bus";
+import { fmtLat, fmtLon } from "@/lib/sector";
+import { useClimateGuard } from "@/context/ClimateGuardContext";
+
+type InitStage =
+  | "idle"
+  | "initializing"
+  | "linking"
+  | "locating"
+  | "building"
+  | "ready";
+
+export function ClimateGuardHero() {
+  const navigate = useNavigate();
+
   const {
-    coordinates,
-    conditions,
-    isRegistered,
     locationStatus,
-    initPhase,
-    addressState,
-    report,
-    registrationError,
-    requestLocation,
-    updateAddress,
+    latitude,
+    longitude,
+    weather,
+    weatherStatus,
+    riskLevel,
+    operatorName,
+    operatorPhone,
+    operatorAddress,
+    readiness,
+    setProfileField,
     registerOperator,
-    cycleRisk,
-    dismissReport,
-  } = useClimate();
+  } = useClimateGuard();
 
-  const [isTelemetryDrawerOpen, setIsTelemetryDrawerOpen] = useState(false);
-  const [mouseParallax, setMouseParallax] = useState({ x: 0, y: 0 });
+  const snap = useSyncExternalStore(
+    earthBus.subscribe,
+    earthBus.getSnapshot,
+    earthBus.getSnapshot,
+  );
 
-  // Coordinated 3-Phase Stagger Animation:
-  // Phase 1 (100ms): Headline fades in first (500ms transition)
-  // Phase 2 (650ms): Secure Risk Profile card rising from below (550ms transition)
-  // Phase 3 (1250ms): Earth and subtle telemetry indicators (600ms transition)
-  const [animPhase, setAnimPhase] = useState<number>(0);
+  const [initStage, setInitStage] = useState<InitStage>("idle");
+  const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const t1 = setTimeout(() => setAnimPhase(1), 100);  // Phase 1: Fade in headline first
-    const t2 = setTimeout(() => setAnimPhase(2), 650);  // Phase 2: Card rising from below
-    const t3 = setTimeout(() => setAnimPhase(3), 1250); // Phase 3: Earth & subtle telemetry indicators
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, []);
+  const handleInitSubmit = async (
+    e: React.FormEvent<HTMLFormElement>,
+  ) => {
+    e.preventDefault();
 
-  // Global subtle mouse parallax
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      const x = (e.clientX / window.innerWidth) * 2 - 1;
-      const y = (e.clientY / window.innerHeight) * 2 - 1;
-      setMouseParallax({ x, y });
-    };
+    if (initStage !== "idle") return;
 
-    window.addEventListener('mousemove', handleMouseMove, { passive: true });
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []);
+    setFormError(null);
+
+    if (!operatorName.trim()) {
+      setFormError("PRIMARY OPERATOR NAME IS REQUIRED.");
+      return;
+    }
+
+    const cleanPhone = operatorPhone.replace(/\D/g, "");
+
+    if (cleanPhone.length < 7) {
+      setFormError("VALID MOBILE NUMBER REQUIRED.");
+      return;
+    }
+
+    if (!operatorAddress.trim()) {
+      setFormError("REGIONAL PERIMETER ADDRESS REQUIRED.");
+      return;
+    }
+
+    try {
+      setInitStage("initializing");
+      await new Promise<void>((resolve) => setTimeout(resolve, 450));
+
+      setInitStage("linking");
+      await new Promise<void>((resolve) => setTimeout(resolve, 600));
+
+      setInitStage("locating");
+      const registered = await registerOperator();
+
+      if (!registered) {
+        setFormError(
+          "REGISTRATION FAILED. CHECK YOUR DETAILS AND TRY AGAIN.",
+        );
+        setInitStage("idle");
+        return;
+      }
+
+      setInitStage("building");
+      await new Promise<void>((resolve) => setTimeout(resolve, 650));
+
+      setInitStage("ready");
+
+      if (typeof navigator.vibrate === "function") {
+        navigator.vibrate([20, 60, 20]);
+      }
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 450));
+
+      await navigate({ to: "/area" });
+    } catch (err: unknown) {
+      setFormError(
+        err instanceof Error
+          ? err.message
+          : "INITIALIZATION SEQUENCE FAILED.",
+      );
+      setInitStage("idle");
+    }
+  };
+
+  const getButtonText = (): string => {
+    switch (initStage) {
+      case "initializing":
+        return "INITIALIZING...";
+      case "linking":
+        return "ESTABLISHING SECURE LINK...";
+      case "locating":
+        return "RESOLVING LOCATION...";
+      case "building":
+        return "BUILDING RISK PROFILE...";
+      case "ready":
+        return "PERIMETER SECURED";
+      default:
+        return "INITIALIZE CLIMATEGUARD";
+    }
+  };
+
+  const displayLat =
+    latitude !== null
+      ? fmtLat(latitude, 1)
+      : locationStatus === "REQUESTING_LOCATION"
+        ? "Locating..."
+        : "28.6° N";
+
+  const displayLon =
+    longitude !== null
+      ? fmtLon(longitude, 1)
+      : locationStatus === "REQUESTING_LOCATION"
+        ? "Locating..."
+        : "77.2° E";
+
+  const displayConditions = weather
+    ? `${weather.temperature}°C · ${weather.humidity}% humidity`
+    : weatherStatus === "SYNCING"
+      ? "Syncing weather data..."
+      : "Weather data unavailable";
+
+  const riskColor =
+    riskLevel === "SEVERE"
+      ? "text-red-400"
+      : riskLevel === "HIGH"
+        ? "text-orange-400"
+        : riskLevel === "MODERATE"
+          ? "text-amber-400"
+          : "text-emerald-400";
 
   return (
-    <div className="relative min-h-[calc(100vh-65px)] w-full text-slate-100 flex flex-col justify-between overflow-x-hidden selection:bg-sky-500/30 selection:text-sky-200">
-      {/* 1. Deep Space Cosmic Background with Parallax */}
-      <ClimateBackground mouseX={mouseParallax.x} mouseY={mouseParallax.y} />
+    <main className="climate-entry pt-14">
+      <ClimateBackground />
 
-      {/* 2. Top-Center OBSERVATION ACTIVE Indicator (matching reference screenshot) */}
-      <div
-        className={`absolute top-4 left-1/2 -translate-x-1/2 hidden md:flex items-center gap-2 pointer-events-none select-none z-20 transition-all duration-500 ease-out ${
-          animPhase >= 3 ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'
-        }`}
-      >
-        <span className="font-mono text-[10px] tracking-[0.25em] text-emerald-400 font-medium uppercase drop-shadow-[0_0_8px_rgba(52,211,153,0.35)]">
-          OBSERVATION ACTIVE
-        </span>
+      <div className="fixed top-16 left-6 pointer-events-none text-white/20 font-mono text-xs select-none">
+        +
+      </div>
+      <div className="fixed top-16 right-6 pointer-events-none text-white/20 font-mono text-xs select-none">
+        +
+      </div>
+      <div className="fixed bottom-6 left-6 pointer-events-none text-white/20 font-mono text-xs select-none">
+        +
+      </div>
+      <div className="fixed bottom-6 right-6 pointer-events-none text-white/20 font-mono text-xs select-none">
+        +
       </div>
 
-      {/* 3. Phase 3: Persistent Photorealistic 3D Earth (Reduced clouds & golden lights) */}
-      <EarthScene
-        currentLat={coordinates.lat}
-        currentLng={coordinates.lng}
-        isVisible={true}
-      />
+      <section className="climate-stage" aria-labelledby="climate-title">
+        <HudTelemetry />
 
-      {/* 4. Phase 3: Vertical Earth Telemetry Strip (matching reference screenshot) */}
-      <div
-        className={`hidden xl:flex absolute right-[440px] 2xl:right-[480px] top-1/2 -translate-y-1/2 flex-col items-center gap-2 pointer-events-none select-none z-10 transition-all duration-500 ease-out ${
-          animPhase >= 3 ? 'opacity-70' : 'opacity-0'
-        }`}
-      >
-        <span className="w-1.5 h-px bg-slate-700" />
-        <span
-          className="font-mono text-[9px] tracking-[0.28em] text-slate-500 whitespace-nowrap"
-          style={{ writingMode: 'vertical-rl' }}
-        >
-          CG / {Math.abs(coordinates.lat).toFixed(4)}° {coordinates.lat >= 0 ? 'N' : 'S'} &nbsp; {Math.abs(coordinates.lng).toFixed(4)}° {coordinates.lng >= 0 ? 'E' : 'W'} / {conditions.temperature}°C
-        </span>
-        <span className="w-1.5 h-px bg-slate-700" />
-      </div>
+        <div className="flex items-center justify-between w-full max-w-7xl mx-auto mb-4">
+          <div className="system-status">
+            <i />
+            CLIMATE INTELLIGENCE SYSTEM <span>v0.1</span>
+          </div>
 
-      {/* 5. Main Viewport Grid: Left Hero & Right Registration Card */}
-      <main className="relative z-10 flex-1 px-4 sm:px-8 lg:px-14 py-4 md:py-6 flex flex-col justify-between max-w-[1680px] mx-auto w-full">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center my-auto">
-          {/* Phase 1: Left Column Hero Editorial Headline & Kicker Fades in First */}
-          <div
-            className={`lg:col-span-7 flex flex-col justify-center max-w-xl pt-2 lg:pt-0 transition-all duration-500 ease-out ${
-              animPhase >= 1 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
-            }`}
-          >
-            {/* Eyebrow Kicker */}
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
-              <span className="font-mono text-[10px] sm:text-xs tracking-[0.22em] text-slate-400 uppercase font-medium">
-                LOCATION-AWARE CLIMATE INTELLIGENCE
-              </span>
+          <div className="hidden md:block text-[11px] font-mono tracking-widest text-emerald-400/90 font-medium">
+            OBSERVATION ACTIVE
+          </div>
+        </div>
+
+        <div className="earth-viewport">
+          <EarthScene />
+
+          <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+            <div
+              className="absolute w-[82%] h-[68%] rounded-full border border-cyan-400/25 -rotate-12 pointer-events-none shadow-[0_0_15px_rgba(34,211,238,0.08)]"
+              style={{ borderStyle: "dashed" }}
+            />
+
+            <div className="absolute top-[28%] right-[22%] px-2 py-0.5 rounded border border-white/20 bg-black/60 backdrop-blur-sm text-[9px] font-mono tracking-widest text-white/70">
+              ORBITAL VIEW • 03
             </div>
 
-            {/* Editorial Headline with Guaranteed Contrast and Orbital View Badge */}
-            <h1 className="mt-3 sm:mt-4 text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight leading-[1.08] drop-shadow-[0_4px_28px_rgba(2,4,10,0.95)]">
-              {/* Editorial headline */}
-              <span className="block text-white drop-shadow-[0_2px_8px_rgba(2,4,10,0.9)]">
-                Your Climate.
-              </span>
+            <div className="absolute bottom-[22%] right-[16%] rotate-[-12deg] text-[9px] font-mono text-cyan-300/80 tracking-wider bg-black/40 px-2 py-0.5 rounded border border-cyan-500/20">
+              EQ /{" "}
+              {latitude !== null ? fmtLat(latitude, 4) : "28.6139° N"} /{" "}
+              {longitude !== null ? fmtLon(longitude, 4) : "077.2090° E"} /{" "}
+              {weather ? `${weather.temperature}°C` : "—"}
+            </div>
+          </div>
+        </div>
 
-              {/* Orbital-view telemetry badge */}
-              <span className="block text-[#7dd3fc] drop-shadow-[0_0_24px_rgba(56,189,248,0.35)] mt-1">
-                Your Risk.
-                <span className="inline-flex items-center align-middle ml-3 sm:ml-4 text-[10px] sm:text-xs font-mono font-normal tracking-[0.2em] text-slate-400 border border-slate-700/70 bg-slate-900/60 backdrop-blur-sm px-2.5 py-1 rounded">
-                  ORBITAL VIEW · 03
-                </span>
-              </span>
-              <span className="block text-[#7dd3fc] mt-1 drop-shadow-[0_0_24px_rgba(56,189,248,0.35)]">
-                Your Warning.
-              </span>
-            </h1>
-
-            {/* Supporting Editorial Prose */}
-            <p className="mt-4 sm:mt-6 text-base sm:text-lg text-slate-300 font-normal max-w-lg drop-shadow-[0_2px_12px_rgba(2,4,10,0.85)]">
-              Personalized climate intelligence and early warnings for where you live.
-            </p>
+        <div className="climate-copy">
+          <div className="text-[10px] sm:text-xs font-mono uppercase tracking-[0.2em] text-cyan-400/90 mb-3 font-semibold">
+            LOCATION-AWARE CLIMATE FORESIGHT
           </div>
 
-          {/* Phase 2: Right Column Secure Risk Profile Registration Card Rising from Below */}
+          <h1 id="climate-title">
+            <span>Know the Risk.</span>
+            <span>Before It Reaches You.</span>
+          </h1>
+
+          <p>Personalized climate intelligence for where you live.</p>
+        </div>
+
+        <dl className="climate-readouts">
+          <div>
+            <dt>LIVE MONITORING</dt>
+            <dd>
+              <i />
+              System online
+            </dd>
+          </div>
+
+          <div>
+            <dt>CURRENT LOCATION</dt>
+            <dd>
+              {displayLat} / {displayLon}
+            </dd>
+          </div>
+
+          <div>
+            <dt>CURRENT CONDITIONS</dt>
+            <dd>{displayConditions}</dd>
+          </div>
+
+          <div>
+            <dt>CLIMATE RISK</dt>
+            <dd>
+              <i className={riskColor.replace("text-", "bg-")} />
+              <span className={riskColor}>{riskLevel}</span>
+            </dd>
+          </div>
+
+          <div className="border-none !pl-0 pt-2 flex items-end gap-1 h-6 opacity-75">
+            {[45, 70, 30, 85, 60, 40, 95, 55, 75, 50].map(
+              (height, index) => (
+                <span
+                  key={index}
+                  className="w-1 bg-cyan-400/80 rounded-t-sm transition-all duration-700"
+                  style={{
+                    height: `${height}%`,
+                    animation: `pulse 1.8s ease-in-out infinite alternate ${index * 0.15}s`,
+                  }}
+                />
+              ),
+            )}
+          </div>
+        </dl>
+
+        <CameraPresetBar />
+      </section>
+
+      <form className="profile-panel" onSubmit={handleInitSubmit}>
+        <i className="panel-edge" aria-hidden="true" />
+
+        <div className="flex items-center justify-between pb-2 border-b border-white/10 text-[10px] font-mono">
+          <span className="text-white/60 tracking-wider">SYS.ID // 084-CG</span>
+
+          <div className="flex items-center gap-1.5 text-emerald-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="tracking-widest">SAT-LINK ONLINE</span>
+          </div>
+        </div>
+
+        <header>
+          <h2 className="text-xl font-bold tracking-tight text-white/95">
+            Secure Risk Profile
+          </h2>
+          <p className="text-xs text-white/60">
+            Establish regional perimeter monitoring
+          </p>
+        </header>
+
+        {formError && (
           <div
-            className={`lg:col-span-5 flex justify-center lg:justify-end transition-all duration-550 ease-out ${
-              animPhase >= 2
-                ? 'opacity-100 translate-y-0 scale-100'
-                : 'opacity-0 translate-y-12 scale-[0.98]'
-            }`}
+            role="alert"
+            className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-[11px] font-mono"
           >
-            <RegistrationCard
-              onAddressChange={updateAddress}
-              onSubmit={registerOperator}
-              registrationError={registrationError}
-              addressState={addressState}
-              initPhase={initPhase}
-              lastReport={report}
-              onDismissReport={dismissReport}
+            {formError}
+          </div>
+        )}
+
+        <label>
+          <span className="text-[10px] font-mono tracking-wider text-white/70">
+            PRIMARY OPERATOR [AUTH]
+          </span>
+          <div className="relative">
+            <User
+              size={15}
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40"
+            />
+            <input
+              name="name"
+              autoComplete="name"
+              placeholder="Your full name"
+              value={operatorName}
+              onChange={(e) => setProfileField("name", e.target.value)}
+              className="!pl-10 text-xs"
+              required
             />
           </div>
+        </label>
+
+        <label>
+          <span className="text-[10px] font-mono tracking-wider text-white/70">
+            ENCRYPTED MOBILE [E.164]
+          </span>
+          <div className="relative">
+            <Phone
+              size={15}
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40"
+            />
+            <input
+              name="phone"
+              type="tel"
+              autoComplete="tel"
+              placeholder="+91 98765 43210"
+              value={operatorPhone}
+              onChange={(e) => setProfileField("phone", e.target.value)}
+              className="!pl-10 text-xs font-mono"
+              required
+            />
+          </div>
+        </label>
+
+        <label>
+          <span className="text-[10px] font-mono tracking-wider text-white/70">
+            ADDRESS [MANUAL]
+          </span>
+          <div className="relative">
+            <MapPin
+              size={15}
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40"
+            />
+            <input
+              name="address"
+              autoComplete="street-address"
+              placeholder="Street, city"
+              value={operatorAddress}
+              onChange={(e) => setProfileField("address", e.target.value)}
+              className="!pl-10 text-xs"
+              required
+            />
+          </div>
+        </label>
+
+        <div className="py-1">
+          <div className="flex items-center justify-between text-[10px] font-mono text-white/60 mb-2">
+            <span>READINESS</span>
+            <span className="font-semibold text-white/90">{readiness}%</span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full bg-emerald-400 transition-all duration-500 ease-out"
+                style={{
+                  width: `${Math.min(100, Math.max(0, (readiness / 33) * 100))}%`,
+                }}
+              />
+            </div>
+
+            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full bg-emerald-400 transition-all duration-500 ease-out"
+                style={{
+                  width:
+                    readiness > 33
+                      ? `${Math.min(100, Math.max(0, ((readiness - 33) / 33) * 100))}%`
+                      : "0%",
+                }}
+              />
+            </div>
+
+            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full bg-emerald-400 transition-all duration-500 ease-out"
+                style={{
+                  width:
+                    readiness > 66
+                      ? `${Math.min(100, Math.max(0, ((readiness - 66) / 34) * 100))}%`
+                      : "0%",
+                }}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* Phase 3: Bottom Section Live Monitoring Panel & Telemetry Fades in Last */}
-        <div
-          className={`mt-6 lg:mt-4 transition-all duration-500 ease-out pb-2 ${
-            animPhase >= 3 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+        <button
+          type="submit"
+          disabled={initStage !== "idle"}
+          className={`w-full h-13 mt-2 rounded-xl font-bold tracking-wider uppercase text-xs transition-all duration-300 flex items-center justify-center gap-3 shadow-lg ${
+            initStage !== "idle"
+              ? "bg-[#dcd5c9]/80 text-black/80 cursor-wait"
+              : "bg-[#e8e2d5] hover:bg-[#f2ede2] text-black active:scale-[0.98] shadow-white/10"
           }`}
         >
-          <LiveMonitoringPanel
-            coordinates={coordinates}
-            conditions={conditions}
-            onCycleRisk={(newRisk: RiskLevel) => cycleRisk(newRisk)}
-            onRequestDeviceLocation={requestLocation}
-            onOpenExtendedTelemetry={() => setIsTelemetryDrawerOpen(true)}
-            isLocating={locationStatus === 'REQUESTING LOCATION'}
-            isRegistered={isRegistered}
-          />
-        </div>
-      </main>
+          <span>{getButtonText()}</span>
 
-      {/* 5. Non-Disruptive Extended Telemetry Matrix Drawer */}
-      <ExtendedTelemetryDrawer
-        isOpen={isTelemetryDrawerOpen}
-        onClose={() => setIsTelemetryDrawerOpen(false)}
-        coordinates={coordinates}
-        conditions={conditions}
-      />
-    </div>
+          {initStage === "idle" && <ArrowRight size={16} />}
+
+          {initStage !== "idle" && initStage !== "ready" && (
+            <LoaderCircle size={16} className="animate-spin" />
+          )}
+
+          {initStage === "ready" && (
+            <Check size={16} className="text-emerald-800" />
+          )}
+        </button>
+
+        <div className="text-[9px] font-mono tracking-widest text-white/40 text-center uppercase pt-1">
+          AES-256 GEOGRAPHIC ISOLATION • ZERO-TELEMETRY LOGGING
+        </div>
+      </form>
+    </main>
   );
-};
+}

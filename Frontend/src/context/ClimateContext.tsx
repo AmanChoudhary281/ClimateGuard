@@ -615,8 +615,10 @@ export const ClimateProvider: React.FC<{
             );
 
 
-          const registeredUserId =
-            registration.userId;
+            const registeredUserId =
+              registration.userId == null
+                ? null
+                : String(registration.userId);
 
 
           /*
